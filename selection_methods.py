@@ -64,8 +64,9 @@ def vae_loss(x, recon, mu, logvar, beta):
     return MSE + KLD
 
 def flatten_vae_loss(x, recon, mu, logvar, beta):
-    mse_loss = nn.MSELoss(reduction='sum')
+    mse_loss = nn.MSELoss(reduction='none')
     MSE = mse_loss(recon, x)
+    MSE = torch.sum(MSE, dim=(1,2,3))
     # KLD = torch.mean(-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1), dim=0)
     KLD = -0.5 * torch.sum((1 + logvar - mu.pow(2) - logvar.exp()),dim=1)
     # beta = 1
@@ -191,8 +192,8 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
     unlabeled_data = read_data(unlabeled_dataloader)
 
     train_iterations = int((ADDENDUM * cycle) * EPOCHV / BATCH)
-    epoch = int((ADDENDUM * cycle) * EPOCHV / BATCH * 0.4)
-    # epoch = 1
+    # epoch = int((ADDENDUM * cycle) * EPOCHV / BATCH * 0.4)
+    epoch = 1
     print('epoch : ',epoch)
     # for iter_count in range(train_iterations ):
     for e in range(epoch):
@@ -232,19 +233,19 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
             # warnings.filterwarnings("ignore")
             #IMG SAVE
             #if e % 299 == 0 and cnt <= 3:#e > epoch - 100 and e%10 == 0:
-            if e == epoch-1 and cnt<=3:
-                cnt += 1
-                if not os.path.exists(PATH + str(cycle) + '/org_class_' + str(cls) + '/' + str(e)):
-                    os.makedirs(PATH + str(cycle) + '/org_class_' + str(cls) + '/' + str(e))
-                for j in range(len(labeled_imgs)):
-                    title = str(i) + '_' +str(j) + '.png'
-                    plt.title(title)
-                    plt.subplot(1,2,1)
-                    plt.imshow(labeled_imgs[j].cpu().permute(1, 2, 0).numpy().squeeze(), cmap='gray')
-                    plt.subplot(1,2,2)
-                    plt.imshow(recon[j].detach().cpu().permute(1, 2, 0).numpy().squeeze(), cmap='gray')
-                    plt.savefig(PATH + str(cycle) + '/org_class_' + str(cls) + '/' + str(e) + '/' + title)
-                    plt.clf()
+            # if e == epoch-1 and cnt<=3:
+            #     cnt += 1
+            #     if not os.path.exists(PATH + str(cycle) + '/org_class_' + str(cls) + '/' + str(e)):
+            #         os.makedirs(PATH + str(cycle) + '/org_class_' + str(cls) + '/' + str(e))
+            #     for j in range(len(labeled_imgs)):
+            #         title = str(i) + '_' +str(j) + '.png'
+            #         plt.title(title)
+            #         plt.subplot(1,2,1)
+            #         plt.imshow(labeled_imgs[j].cpu().permute(1, 2, 0).numpy().squeeze(), cmap='gray')
+            #         plt.subplot(1,2,2)
+            #         plt.imshow(recon[j].detach().cpu().permute(1, 2, 0).numpy().squeeze(), cmap='gray')
+            #         plt.savefig(PATH + str(cycle) + '/org_class_' + str(cls) + '/' + str(e) + '/' + title)
+            #         plt.clf()
 
             if i % 50 == 0:
                 print(
@@ -737,11 +738,15 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
         beta = 1
 
         # c = Counter()
-        np_total_loss = np.array([])
+        np_total_loss = None
         np_total_diff = np.array([])
+        dict_loss_arg = dict()
+        datanum = []
+        arg = np.array([])
+
         for i, (images, labels, _) in enumerate(unlabeled_loader):
-            total_loss = []
             total_diff = []
+            total_loss = []
             images = images.cuda()
             org_score, _, features = model['backbone'](images)
             for vae_num in range(num_cls):
@@ -757,42 +762,79 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                 with torch.no_grad():
                     recon, _, mu, logvar = vae(images)
 
-                    recon_score, _, _ = model['backbone'](recon)
+                    #recon_score, _, _ = model['backbone'](recon)
                     unsup_loss = flatten_vae_loss(images, recon, mu, logvar, beta)
 
-                    diff = np.min(abs(org_score - recon_score).detach().cpu().numpy(), axis=1)
+                    #diff = np.min(abs(org_score - recon_score).detach().cpu().numpy(), axis=1)
 
                     total_loss.append(unsup_loss.detach().cpu().numpy())
-                    total_diff.append(diff)
-                    if i  == 0:
-                        for j in range(len(images)):
-                            if not os.path.exists(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/'):
-                                os.makedirs(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/')
-                            title = 'vae_' + str(vae_num) + 'cls_' + str(int(labels[j])) + str(i) + '_' + str(j) + '.png'
-                            plt.title(title)
-                            plt.subplot(1, 2, 1)
-                            plt.imshow(images[j].cpu().permute(1, 2, 0).numpy())
-                            plt.subplot(1, 2, 2)
-                            plt.imshow(recon[j].detach().cpu().permute(1, 2, 0).numpy())
-                            plt.savefig(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/' + title)
-                            plt.clf()
+                    #print('unsup : ',unsup_loss.shape)
+                    #total_diff.append(diff)
+                    # if i  == 0:
+                    #     for j in range(len(images)):
+                    #         if not os.path.exists(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/'):
+                    #             os.makedirs(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/')
+                    #         title = 'vae_' + str(vae_num) + 'cls_' + str(int(labels[j])) + str(i) + '_' + str(j) + '.png'
+                    #         plt.title(title)
+                    #         plt.subplot(1, 2, 1)
+                    #         plt.imshow(images[j].cpu().permute(1, 2, 0).numpy())
+                    #         plt.subplot(1, 2, 2)
+                    #         plt.imshow(recon[j].detach().cpu().permute(1, 2, 0).numpy())
+                    #         plt.savefig(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/' + title)
+                    #         plt.clf()
+            if np_total_loss is None:
+                np_total_loss = np.array(total_loss)
+                print('np.array : ',np.array(total_loss).shape)
+            else:
+                np_total_loss = np.hstack((np_total_loss, np.array(total_loss)))
+            print(' total shape :',np_total_loss.shape)
+        num_per_cls = ADDENDUM/num_cls
+        print('total loss shape ', np_total_loss.shape)
+        min_total_loss = np.min(np_total_loss, axis=0)   #get min from total loss -> total loss has all the losses for every VAE
+        min_total_arg = np.argmin(np_total_loss, axis=0) #get arg of min from total loss -> will be 0~class num
+        # total_diff = np.min(np.array(total_diff).T, axis=1)
 
-            # print(total_loss)
-            total_loss = np.min(np.array(total_loss), axis=0)
-            total_diff = np.min(np.array(total_diff).T, axis=1)
 
-            np_total_diff = np.append(np_total_diff, total_diff)
-            np_total_loss = np.append(np_total_loss, total_loss)
+        for key in range(len(min_total_loss)):
+            dict_loss_arg[key] = (min_total_arg[key], min_total_loss[key])
 
-            norm_diff = minmax_scale(np_total_diff)
-            norm_loss = np_total_loss
+        sorted_loss_arg = sorted(dict_loss_arg.items(), key=lambda item: item[1][1], reverse=True)
+
+        for cls in range(num_cls):
+            datanum.append(0)
+
+        print('sorted : ',len(sorted_loss_arg))
+        for n in range(len(sorted_loss_arg)):
+            if datanum[sorted_loss_arg[n][1][0]] < num_per_cls:
+                datanum[sorted_loss_arg[n][1][0]] += 1
+
+                arg = np.append(arg, sorted_loss_arg[n][0])
+        print('arg : ',len(arg))
+        print('datanum : ',datanum)
+        for cls in range(num_cls):
+            if datanum[cls] < num_per_cls:
+                _, targ = torch.sort(torch.tensor(np_total_loss[cls, :]))
+                for idx in targ:
+                    if int(idx) in arg:
+                        pass
+                    arg = np.append(arg, int(idx))
+                    datanum[cls] += 1
+                    if datanum[cls] == num_per_cls:
+                        break
+        print('datanum : ', datanum)
+        print('args :', len(arg))
+            # np_total_diff = np.append(np_total_diff, total_diff)
+            #np_total_loss = np.append(np_total_loss, min_total_loss)
+
+            # norm_diff = minmax_scale(np_total_diff)
+            #norm_loss = np_total_loss
 
             # print('norm_diff : ',len(norm_diff))
             # print('norm_loss : ',len(norm_loss))
 
-        total_arr = np.array(norm_diff) * np.array(norm_loss)
-        _, arg = torch.sort(-1*torch.tensor(total_arr))
-
+        #total_arr = np.array(norm_diff) * np.array(norm_loss)
+        #total_arr = np.array(norm_loss)
+        #_, arg = torch.sort(-1*torch.tensor(total_arr))
         # for cls in range(10):
         #     unl_new_dataloader = DataLoader(unlab_data_list[cls], batch_size=BATCH)
         #     for vae_num in range(10):
