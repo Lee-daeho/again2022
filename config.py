@@ -6,7 +6,7 @@ NUM_TRAIN = 50000 # N \Fashion MNIST 60000, cifar 10/100 50000
 # NUM_VAL   = 50000 - NUM_TRAIN
 BATCH     = 128 # B
 SUBSET    = 10000 # M
-ADDENDUM  = 1000 # K
+ADDENDUM  = 2000 # K
 
 MARGIN = 1.0 # xi
 WEIGHT = 1.0 # lambda
