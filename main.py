@@ -68,7 +68,7 @@ if __name__ == '__main__':
     method_type: 'Random', 'UncertainGCN', 'CoreGCN', 'CoreSet', 'lloss','VAAL'
     '''
     results = open('results_' + str(args.method_type) + "_" + args.dataset + '_main' + str(args.cycles) + str(
-        args.total) + '_' + str(args.cycles) + 'cycles.txt', 'w')
+        args.total) + '_num'+str(args.number) + '_' + str(args.cycles) + 'cycles.txt', 'w')
     print("Dataset: %s" % args.dataset)
     print("Method type:%s" % method)
     if args.total:

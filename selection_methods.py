@@ -192,8 +192,8 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
     unlabeled_data = read_data(unlabeled_dataloader)
 
     train_iterations = int((ADDENDUM * cycle) * EPOCHV / BATCH)
-    # epoch = int((ADDENDUM * cycle) * EPOCHV / BATCH * 0.4)
-    epoch = 1
+    epoch = int((ADDENDUM * cycle) * EPOCHV / BATCH * 0.4)
+    #epoch = 1
     print('epoch : ',epoch)
     # for iter_count in range(train_iterations ):
     for e in range(epoch):
@@ -787,9 +787,9 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                 print('np.array : ',np.array(total_loss).shape)
             else:
                 np_total_loss = np.hstack((np_total_loss, np.array(total_loss)))
-            print(' total shape :',np_total_loss.shape)
+            #print(' total shape :',np_total_loss.shape)
         num_per_cls = ADDENDUM/num_cls
-        print('total loss shape ', np_total_loss.shape)
+        #print('total loss shape ', np_total_loss.shape)
         min_total_loss = np.min(np_total_loss, axis=0)   #get min from total loss -> total loss has all the losses for every VAE
         min_total_arg = np.argmin(np_total_loss, axis=0) #get arg of min from total loss -> will be 0~class num
         # total_diff = np.min(np.array(total_diff).T, axis=1)
