@@ -193,7 +193,7 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
 
     train_iterations = int((ADDENDUM * cycle) * EPOCHV / BATCH)
     epoch = int((ADDENDUM * cycle) * EPOCHV / BATCH * 0.4)
-    #epoch = 1
+    epoch = 1
     print('epoch : ',epoch)
     # for iter_count in range(train_iterations ):
     for e in range(epoch):
@@ -739,16 +739,18 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
 
         # c = Counter()
         np_total_loss = None
-        np_total_diff = np.array([])
+        np_total_score = None
         dict_loss_arg = dict()
         datanum = []
         arg = np.array([])
 
         for i, (images, labels, _) in enumerate(unlabeled_loader):
-            total_diff = []
+            total_score = []
             total_loss = []
             images = images.cuda()
             org_score, _, features = model['backbone'](images)
+            total_score.append(org_score.squeeze().detach().cpu().numpy().T)  #(128,10) if .T (10,128)
+            print('total score : ',total_score[0].shape)
             for vae_num in range(num_cls):
                 if args.dataset == 'cifar100':
                     vae = VAE()
@@ -762,13 +764,12 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                 with torch.no_grad():
                     recon, _, mu, logvar = vae(images)
 
-                    #recon_score, _, _ = model['backbone'](recon)
+                    recon_score, _, _ = model['backbone'](recon)
                     unsup_loss = flatten_vae_loss(images, recon, mu, logvar, beta)
 
                     #diff = np.min(abs(org_score - recon_score).detach().cpu().numpy(), axis=1)
 
                     total_loss.append(unsup_loss.detach().cpu().numpy())
-                    #print('unsup : ',unsup_loss.shape)
                     #total_diff.append(diff)
                     # if i  == 0:
                     #     for j in range(len(images)):
@@ -782,47 +783,78 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                     #         plt.imshow(recon[j].detach().cpu().permute(1, 2, 0).numpy())
                     #         plt.savefig(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/' + title)
                     #         plt.clf()
+
             if np_total_loss is None:
                 np_total_loss = np.array(total_loss)
-                print('np.array : ',np.array(total_loss).shape)
+                np_total_score = np.array(total_score).squeeze()
+                print('yes : ',np_total_score.shape)
             else:
                 np_total_loss = np.hstack((np_total_loss, np.array(total_loss)))
-            #print(' total shape :',np_total_loss.shape)
+
+                print('no : ',np_total_score.shape)
+                print('no : ', np.array(total_score).shape)
+                np_total_score = np.hstack((np_total_score, np.array(total_score).squeeze()))
+
         num_per_cls = ADDENDUM/num_cls
-        #print('total loss shape ', np_total_loss.shape)
         min_total_loss = np.min(np_total_loss, axis=0)   #get min from total loss -> total loss has all the losses for every VAE
         min_total_arg = np.argmin(np_total_loss, axis=0) #get arg of min from total loss -> will be 0~class num
+        min_total_score = np.min(np_total_score, axis=0)
+        min_total_sarg = np.argmin(np_total_score, axis=0)
         # total_diff = np.min(np.array(total_diff).T, axis=1)
 
+        _, argu = torch.sort(torch.tensor(min_total_loss * minmax_scale(min_total_score)))
 
-        for key in range(len(min_total_loss)):
-            dict_loss_arg[key] = (min_total_arg[key], min_total_loss[key])
+        indexes = np.zeros_like(argu)
+        for num in range(len(argu)):
+            if not (min_total_arg[num] == min_total_sarg[num]): #different arg
+                indexes[num] = len(argu)
+            else:                                               #same arg
+                indexes[num] = num
 
-        sorted_loss_arg = sorted(dict_loss_arg.items(), key=lambda item: item[1][1], reverse=True)
+        arg = torch.tensor(np.zeros_like(argu))
+        c = Counter()
+        c.update(indexes)
 
-        for cls in range(num_cls):
-            datanum.append(0)
+        diff_num = len(argu) - c[len(argu)]
+        cnt_same = 0
+        cnt_diff = 0
 
-        print('sorted : ',len(sorted_loss_arg))
-        for n in range(len(sorted_loss_arg)):
-            if datanum[sorted_loss_arg[n][1][0]] < num_per_cls:
-                datanum[sorted_loss_arg[n][1][0]] += 1
+        for idx in range(len(argu)):
+            if indexes[idx] == len(argu):   #diff arg
+                arg[diff_num + cnt_diff] = argu[idx]
+                cnt_diff += 1
+            else:
+                arg[cnt_same] = argu[idx]
+                cnt_same += 1
 
-                arg = np.append(arg, sorted_loss_arg[n][0])
-        print('arg : ',len(arg))
-        print('datanum : ',datanum)
-        for cls in range(num_cls):
-            if datanum[cls] < num_per_cls:
-                _, targ = torch.sort(torch.tensor(np_total_loss[cls, :]))
-                for idx in targ:
-                    if int(idx) in arg:
-                        pass
-                    arg = np.append(arg, int(idx))
-                    datanum[cls] += 1
-                    if datanum[cls] == num_per_cls:
-                        break
-        print('datanum : ', datanum)
-        print('args :', len(arg))
+        # for key in range(len(min_total_loss)):
+        #     dict_loss_arg[key] = (min_total_arg[key], min_total_loss[key])
+        #
+        # sorted_loss_arg = sorted(dict_loss_arg.items(), key=lambda item: item[1][1], reverse=True)
+        #
+        # for cls in range(num_cls):
+        #     datanum.append(0)
+        #
+        # print('sorted : ',len(sorted_loss_arg))
+        # for n in range(len(sorted_loss_arg)):
+        #     if datanum[sorted_loss_arg[n][1][0]] < num_per_cls:
+        #         datanum[sorted_loss_arg[n][1][0]] += 1
+        #
+        #         arg = np.append(arg, sorted_loss_arg[n][0])
+        # print('arg : ',len(arg))
+        # print('datanum : ',datanum)
+        # for cls in range(num_cls):
+        #     if datanum[cls] < num_per_cls:
+        #         _, targ = torch.sort(torch.tensor(np_total_loss[cls, :]))
+        #         for idx in targ:
+        #             if int(idx) in arg:
+        #                 pass
+        #             arg = np.append(arg, int(idx))
+        #             datanum[cls] += 1
+        #             if datanum[cls] == num_per_cls:
+        #                 break
+        # print('datanum : ', datanum)
+        # print('args :', len(arg))
             # np_total_diff = np.append(np_total_diff, total_diff)
             #np_total_loss = np.append(np_total_loss, min_total_loss)
 
