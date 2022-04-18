@@ -193,7 +193,7 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
 
     train_iterations = int((ADDENDUM * cycle) * EPOCHV / BATCH)
     epoch = int((ADDENDUM * cycle) * EPOCHV / BATCH * 0.4)
-    epoch = 1
+    # epoch = 1
     print('epoch : ',epoch)
     # for iter_count in range(train_iterations ):
     for e in range(epoch):
@@ -819,6 +819,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
         cnt_same = 0
         cnt_diff = 0
 
+        print('diff num : ',c[len(argu)])
         for idx in range(len(argu)):
             if indexes[idx] == len(argu):   #diff arg
                 arg[diff_num + cnt_diff] = argu[idx]
