@@ -75,7 +75,8 @@ def flatten_vae_loss(x, recon, mu, logvar, beta):
     KLD = -0.5 * torch.sum((1 + logvar - mu.pow(2) - logvar.exp()),dim=1)
     # beta = 1
     KLD = KLD * beta
-    return MSE + KLD
+    return KLD
+    #return MSE + KLD
 
 
 def train_vaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cycle):
