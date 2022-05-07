@@ -85,7 +85,7 @@ def load_dataset(dataset):
 
     if dataset == 'cifar10': 
         data_train = CIFAR10('../cifar10', train=True, download=True, transform=train_transform)
-        data_unlabeled = MyDataset(dataset, True, test_transform)
+        data_unlabeled = MyDataset(dataset, True, train_transform)
         data_test  = CIFAR10('../cifar10', train=False, download=True, transform=test_transform)
         NO_CLASSES = 10
         adden = ADDENDUM

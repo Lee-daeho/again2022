@@ -9,6 +9,7 @@ from torchvision import transforms
 from collections import Counter
 import os
 import warnings
+import random
 # Custom
 from config import *
 from models.query_models import VAE, Discriminator, GCN, CVAE, C_Discriminator
@@ -55,11 +56,10 @@ def read_data(dataloader, labels=True):
 def vae_loss(x, recon, mu, logvar, beta):
     mse_loss = nn.MSELoss()
     MSE = mse_loss(recon, x)
-    # KLD = torch.mean(-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1), dim=0)
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    KLD = torch.mean(-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1), dim=0)
+    # KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     # beta = 1
     # print('mse : ',MSE)
-    # print('KLD : ',KLD)
     KLD = KLD * beta
     return MSE + KLD
 
@@ -341,7 +341,29 @@ def get_camresult(model, data_loader, num_cls):
 def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, args):
 
     if method == 'Random':
-        arg = np.random.randint(SUBSET, size=SUBSET)
+        #arg = np.random.randint(SUBSET, size=SUBSET)
+        unlabeled_loader = DataLoader(data_unlabeled, batch_size=BATCH,
+                                      sampler=SubsetSequentialSampler(subset), pin_memory=True)
+        if args.dataset == 'cifar100':
+            num_cls = 100
+        else:
+            num_cls = 10
+
+        data_list = []
+        for i in range(num_cls):
+            data_list.append(np.array([]))
+
+        for idx, (_, targets, _) in enumerate(unlabeled_loader):
+            for i in range(len(targets)):
+                data_list[targets[int(i)]] = np.append(data_list[targets[int(i)]], idx * BATCH + i)
+
+        arg = []
+
+        for i in range(num_cls):
+            random.shuffle(data_list[i])
+            arg += list(data_list[i][:int(ADDENDUM / num_cls)])
+
+        arg = np.array(arg)
 
     if (method == 'UncertainGCN') or (method == 'CoreGCN'):
         # Create unlabeled dataloader for the unlabeled subset
@@ -426,7 +448,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
 
         # Measure uncertainty of each data points in the subset
         uncertainty = get_uncertainty(model, unlabeled_loader)
-        arg = np.argsort(uncertainty)        
+        arg = np.argsort(uncertainty)
 
     if method == 'VAAL':
         # Create unlabeled dataloader for the unlabeled subset
@@ -716,6 +738,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
 
 
         loss_thres = np.zeros(num_cls)
+        loss_diff_thres = np.zeros(num_cls)
 
         for i in range(num_cls):
             total_loss = []
@@ -756,7 +779,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                             # for count in range(num_vae_steps):  # num_vae_steps
                             recon, _, mu, logvar = models['vae'](labeled_imgs)
                             unsup_loss = vae_loss(labeled_imgs, recon, mu, logvar, beta=1)
-                            print('unsup_loss : ',unsup_loss)
+                            # print('unsup_loss : ',unsup_loss)
 
                             loss_same += (unsup_loss * len(labels))
                             total_num += len(labels)
@@ -787,10 +810,14 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                             total_diff += len(labels)
 
             loss_diff /= total_diff
+            loss_diff_thres[i] = loss_diff
 
             print('loss_same : ',loss_same)
             print('loss_diff : ',loss_diff)
 
+        with open(args.dataset + '_' + args.method_type + '_' + str(args.number) + '_' + 'thres.txt', 'a') as f:
+            f.write(str(cycle+1) + 'thres same : ' + str(loss_thres) + '\n')
+            f.write(str(cycle + 1) + 'thres diff : ' + str(loss_diff_thres) + '\n')
         beta = 1
 
         # c = Counter()
@@ -813,7 +840,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                 with torch.no_grad():
                     recon, _, mu, logvar = vae(images)
                     unsup_loss = flatten_vae_loss(images, recon, mu, logvar, beta)
-                    print('fffffffff unsup loss : ',unsup_loss)
+                    # print('fffffffff unsup loss : ',unsup_loss)
 
                     bool_unsup_loss = unsup_loss.detach().cpu().numpy() < loss_thres[vae_num]  #(128)
                     total_loss.append(bool_unsup_loss)  #(n, num_cls)
@@ -827,6 +854,9 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
         # print('shitttt : ',np_total_loss)
 
         bools = sum(np_total_loss)
+        # print('bools : ', sum(bools > 2))
+        with open(args.dataset + '_' + args.method_type + '_' + str(args.number) + '_' + 'thres.txt', 'a') as f:
+            f.write(str(cycle + 1) + 'bools : ' + str(sum(bools>2)) + '\n')
 
         _, arg = torch.sort(torch.tensor(bools))
 
