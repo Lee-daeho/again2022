@@ -866,6 +866,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                 unlab_label_list = labels.detach().cpu().numpy()
             else:
                 unlab_label_list = np.concatenate((unlab_label_list, labels.detach().cpu().numpy()))
+            print('labels : ',labels)
 
             for vae_num in range(num_cls):
                 if args.dataset == 'cifar100':
@@ -882,26 +883,26 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                     # print('fffffffff unsup loss : ',unsup_loss)
 
                     bool_unsup_loss = unsup_loss.detach().cpu().numpy() < loss_thres[vae_num]  #(128)
-                    total_loss.append(bool_unsup_loss)  #(n, num_cls)
+                    total_loss.append(bool_unsup_loss)  #(num_cls, n)
 
             if np_total_loss is None:
-                np_total_loss = np.array(total_loss)    #(n , num_cls)
+                np_total_loss = np.array(total_loss)    #(num_cls, n)
             else:
                 np_total_loss = np.hstack((np_total_loss, np.array(total_loss)))
 
         # print('np total loss : ',np_total_loss.shape)
         # print('shitttt : ',np_total_loss)
         prediction_check_list = np.zeros(num_cls)
-
+        # print('np total loss : ',np_total_loss.shape)
         for idx in range(len(unlab_label_list)):    #unlab_label_list has true label
-            if np_total_loss[idx][unlab_label_list[idx]]:
+            if np_total_loss[unlab_label_list[idx]][idx]:
                 prediction_check_list[unlab_label_list[idx]] += 1
 
         cnt = Counter()
         cnt.update(unlab_label_list)
 
         for i in range(len(prediction_check_list)):
-            prediction_check_list[i] = prediction_check_list / cnt[i]
+            prediction_check_list[i] = prediction_check_list[i] / cnt[i]
 
         bools = sum(np_total_loss)
         # print('bools : ', sum(bools > 2))
