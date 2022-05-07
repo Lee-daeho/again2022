@@ -9,6 +9,7 @@ from torchvision import transforms
 from collections import Counter
 import os
 import warnings
+import random
 # Custom
 from config import *
 from models.query_models import VAE, Discriminator, GCN, CVAE, C_Discriminator
@@ -42,6 +43,7 @@ def aff_to_adj(x, y=None):
 
     return adj
 
+
 def read_data(dataloader, labels=True):
     if labels:
         while True:
@@ -52,26 +54,29 @@ def read_data(dataloader, labels=True):
             for img, _, _ in dataloader:
                 yield img
 
+
 def vae_loss(x, recon, mu, logvar, beta):
     mse_loss = nn.MSELoss()
     MSE = mse_loss(recon, x)
-    # KLD = torch.mean(-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1), dim=0)
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    KLD = torch.mean(-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1), dim=0)
+    # KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     # beta = 1
     # print('mse : ',MSE)
-    # print('KLD : ',KLD)
     KLD = KLD * beta
     return MSE + KLD
+
 
 def flatten_vae_loss(x, recon, mu, logvar, beta):
     mse_loss = nn.MSELoss(reduction='none')
     MSE = mse_loss(recon, x)
-    MSE = torch.sum(MSE, dim=(1,2,3))
+    div = MSE.shape[1] * MSE.shape[2] * MSE.shape[3]
+    MSE = torch.sum(MSE, dim=(1,2,3)) / div
     # KLD = torch.mean(-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1), dim=0)
     KLD = -0.5 * torch.sum((1 + logvar - mu.pow(2) - logvar.exp()),dim=1)
     # beta = 1
     KLD = KLD * beta
     return MSE + KLD
+
 
 def train_vaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cycle):
     
@@ -182,7 +187,7 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
         # discriminator = discriminator.cuda()
 
     adversary_param = 1
-    beta = 0.001
+    beta = 1
     num_adv_steps = 1
     num_vae_steps = 2
 
@@ -193,7 +198,7 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
 
     train_iterations = int((ADDENDUM * cycle) * EPOCHV / BATCH)
     epoch = int((ADDENDUM * cycle) * EPOCHV / BATCH * 0.4)
-    #epoch = 1
+    epoch = 1         #changingggg
     print('epoch : ',epoch)
     # for iter_count in range(train_iterations ):
     for e in range(epoch):
@@ -247,7 +252,7 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
             #         plt.savefig(PATH + str(cycle) + '/org_class_' + str(cls) + '/' + str(e) + '/' + title)
             #         plt.clf()
 
-            if i % 50 == 0:
+            if e % 100 == 0:
                 print(
                    "epoch : " + str(e) + "  Iteration: " + str(i) + "  vae_loss: " + str(total_vae_loss.item()))  # + " dsc_loss: " + str(
                 # dsc_loss.item()))
@@ -340,7 +345,29 @@ def get_camresult(model, data_loader, num_cls):
 def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, args):
 
     if method == 'Random':
-        arg = np.random.randint(SUBSET, size=SUBSET)
+        #arg = np.random.randint(SUBSET, size=SUBSET)
+        unlabeled_loader = DataLoader(data_unlabeled, batch_size=BATCH,
+                                      sampler=SubsetSequentialSampler(subset), pin_memory=True)
+        if args.dataset == 'cifar100':
+            num_cls = 100
+        else:
+            num_cls = 10
+
+        data_list = []
+        for i in range(num_cls):
+            data_list.append(np.array([]))
+
+        for idx, (_, targets, _) in enumerate(unlabeled_loader):
+            for i in range(len(targets)):
+                data_list[targets[int(i)]] = np.append(data_list[targets[int(i)]], idx * BATCH + i)
+
+        arg = []
+
+        for i in range(num_cls):
+            random.shuffle(data_list[i])
+            arg += list(data_list[i][:int(ADDENDUM / num_cls)])
+
+        arg = np.array(arg)
 
     if (method == 'UncertainGCN') or (method == 'CoreGCN'):
         # Create unlabeled dataloader for the unlabeled subset
@@ -425,7 +452,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
 
         # Measure uncertainty of each data points in the subset
         uncertainty = get_uncertainty(model, unlabeled_loader)
-        arg = np.argsort(uncertainty)        
+        arg = np.argsort(uncertainty)
 
     if method == 'VAAL':
         # Create unlabeled dataloader for the unlabeled subset
@@ -679,7 +706,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
 
         data_list = []
         unlab_data_list = []
-        for i in range(num_cls):
+        for i in range(num_cls):    #split datum
             data_list.append(NewDataset(imgs_list[i], np.ones(len(imgs_list[i])) * i))
             unlab_data_list.append(NewDataset(unlab_imgs_list[i], np.ones(len(unlab_imgs_list[i])) * i))
 
@@ -713,7 +740,17 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
             optim_list = [optim_vae0, optim_vae1, optim_vae2, optim_vae3, optim_vae4, optim_vae5, optim_vae6, optim_vae7, optim_vae8, optim_vae9]
 
 
+
+        loss_thres = np.zeros(num_cls)
+        loss_var_list = np.zeros(num_cls)
+        loss_same_max = np.zeros(num_cls)
+
+        loss_diff_thres = np.zeros(num_cls)
+        loss_diff_var_list = np.zeros(num_cls)
+        loss_diff_min = np.zeros(num_cls)
+
         for i in range(num_cls):
+            total_loss = []
             new_dataloader = DataLoader(data_list[i], batch_size=BATCH)
             unl_new_dataloader = DataLoader(unlab_data_list[i], batch_size=BATCH)
 
@@ -730,25 +767,107 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
 
                 train_cvaal(models, optimizers, new_dataloader, unlabeled_loader, cycle + 1 , i)
 
-        all_preds, all_indices = [], []
+            loss_diff = 0
+            total_diff = None
+            # print('why?')
+            for j in range(num_cls):
+                if i == j:
+                    # print('i : ',i)
+                    # print('j : ',j)
+                    loss_same = 0
+                    total_num = 0
+                    total_loss = None
+                    for k, (labeled_imgs, labels) in enumerate(new_dataloader):
+                        models['vae'].cuda()
+                        labeled_imgs = labeled_imgs.cuda()
+                        # unlabeled_imgs = unlabeled_imgs.cuda()
+                        labels = labels.cuda()
+                        with torch.no_grad():
+                            models['vae'](labeled_imgs)
 
-        unlab_recon_list = [np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]),
-                     np.array([]), np.array([]), np.array([])]
+                            # VAE step
+                            # for count in range(num_vae_steps):  # num_vae_steps
+                            recon, _, mu, logvar = models['vae'](labeled_imgs)
+                            unsup_loss = flatten_vae_loss(labeled_imgs, recon, mu, logvar, beta=1)
+                            # loss_same += (unsup_loss * len(labels))
+                            # total_num += len(labels)
+                            if total_loss is None:
+                                total_loss = unsup_loss.detach().cpu().numpy()
+                            else:
+                                total_loss = np.concatenate((total_loss, unsup_loss.detach().cpu().numpy()))
+                    # print('total_num : ',total_num)
+                    # loss_same /= total_num
+                    loss_same = np.mean(total_loss)
+                    loss_same_var = np.std(total_loss)
+                    loss_same_mx = np.max(total_loss)
+                    loss_thres[i] = loss_same
+                    loss_var_list[i] = loss_same_var
+                    loss_same_max[i] = loss_same_mx
+                    # print('loss_same : ',loss_same)
 
+                else:
+                    bnew_dataloader = DataLoader(data_list[j], batch_size=BATCH)
+                    for k, (labeled_imgs, labels) in enumerate(bnew_dataloader):
+                        models['vae'].cuda()
+                        labeled_imgs = labeled_imgs.cuda()
+                        # unlabeled_imgs = unlabeled_imgs.cuda()
+                        labels = labels.cuda()
+                        with torch.no_grad():
+                            models['vae'](labeled_imgs)
+
+                            # VAE step
+                            # for count in range(num_vae_steps):  # num_vae_steps
+                            recon, _, mu, logvar = models['vae'](labeled_imgs)
+
+                            unsup_loss = flatten_vae_loss(labeled_imgs, recon, mu, logvar, beta=1)
+
+                            if total_diff is None:
+                                total_diff = unsup_loss.detach().cpu().numpy()
+                            else:
+                                total_diff = np.concatenate((total_diff, unsup_loss.detach().cpu().numpy()))
+                            # print('unsup_loss : ',unsup_loss)
+                            # print('len labels : ',len(labels))
+
+                            # loss_diff += unsup_loss * len(labels)
+                            # total_diff += len(labels)
+
+            # loss_diff /= total_diff
+            loss_diff = np.mean(total_diff)
+            loss_diff_var = np.std(total_diff)
+            loss_diff_mn = np.min(total_diff)
+
+            loss_diff_thres[i] = loss_diff
+            loss_diff_var_list[i] = loss_diff_var
+            loss_diff_min[i] = loss_diff_mn
+
+            print('loss_same : ',loss_same)
+            print('loss_diff : ',loss_diff)
+
+        with open(args.dataset + '_' + args.method_type + '_' + str(args.number) + '_' + 'thres.txt', 'a') as f:
+            f.write(str(cycle+1) + 'thres same : ' + str(loss_thres) + '\n')
+            f.write(str(cycle + 1) + 'thres same var : ' + str(loss_var_list) + '\n')
+            f.write(str(cycle + 1) + 'thres same max : ' + str(loss_same_max) + '\n')
+
+            f.write(str(cycle + 1) + 'thres diff : ' + str(loss_diff_thres) + '\n')
+            f.write(str(cycle + 1) + 'thres diff var : ' + str(loss_diff_var_list) + '\n')
+            f.write(str(cycle + 1) + 'thres diff min : ' + str(loss_diff_min) + '\n')
         beta = 1
 
         # c = Counter()
         np_total_loss = None
-        np_total_diff = np.array([])
-        dict_loss_arg = dict()
-        datanum = []
         arg = np.array([])
-
+        print('loss_thres : ',loss_thres)
+        unlab_label_list = None
         for i, (images, labels, _) in enumerate(unlabeled_loader):
-            total_diff = []
             total_loss = []
             images = images.cuda()
-            org_score, _, features = model['backbone'](images)
+
+            if unlab_label_list is None:
+                unlab_label_list = labels.detach().cpu().numpy()
+            else:
+                unlab_label_list = np.concatenate((unlab_label_list, labels.detach().cpu().numpy()))
+            print('labels : ',labels)
+
             for vae_num in range(num_cls):
                 if args.dataset == 'cifar100':
                     vae = VAE()
@@ -758,82 +877,41 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                 vae = vae.cuda()
                 vae.eval()
 
-
                 with torch.no_grad():
                     recon, _, mu, logvar = vae(images)
-
-                    #recon_score, _, _ = model['backbone'](recon)
                     unsup_loss = flatten_vae_loss(images, recon, mu, logvar, beta)
+                    # print('fffffffff unsup loss : ',unsup_loss)
 
-                    #diff = np.min(abs(org_score - recon_score).detach().cpu().numpy(), axis=1)
+                    bool_unsup_loss = unsup_loss.detach().cpu().numpy() < loss_thres[vae_num]  #(128)
+                    total_loss.append(bool_unsup_loss)  #(num_cls, n)
 
-                    total_loss.append(unsup_loss.detach().cpu().numpy())
-                    #print('unsup : ',unsup_loss.shape)
-                    #total_diff.append(diff)
-                    # if i  == 0:
-                    #     for j in range(len(images)):
-                    #         if not os.path.exists(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/'):
-                    #             os.makedirs(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/')
-                    #         title = 'vae_' + str(vae_num) + 'cls_' + str(int(labels[j])) + str(i) + '_' + str(j) + '.png'
-                    #         plt.title(title)
-                    #         plt.subplot(1, 2, 1)
-                    #         plt.imshow(images[j].cpu().permute(1, 2, 0).numpy())
-                    #         plt.subplot(1, 2, 2)
-                    #         plt.imshow(recon[j].detach().cpu().permute(1, 2, 0).numpy())
-                    #         plt.savefig(PATH + str(cycle+1) + '/class_' + str(int(labels[j])) + '/newreconvae/' + title)
-                    #         plt.clf()
             if np_total_loss is None:
-                np_total_loss = np.array(total_loss)
-                print('np.array : ',np.array(total_loss).shape)
+                np_total_loss = np.array(total_loss)    #(num_cls, n)
             else:
                 np_total_loss = np.hstack((np_total_loss, np.array(total_loss)))
-            #print(' total shape :',np_total_loss.shape)
-        num_per_cls = ADDENDUM/num_cls
-        #print('total loss shape ', np_total_loss.shape)
-        min_total_loss = np.min(np_total_loss, axis=0)   #get min from total loss -> total loss has all the losses for every VAE
-        min_total_arg = np.argmin(np_total_loss, axis=0) #get arg of min from total loss -> will be 0~class num
-        # total_diff = np.min(np.array(total_diff).T, axis=1)
 
+        # print('np total loss : ',np_total_loss.shape)
+        # print('shitttt : ',np_total_loss)
+        prediction_check_list = np.zeros(num_cls)
+        # print('np total loss : ',np_total_loss.shape)
+        for idx in range(len(unlab_label_list)):    #unlab_label_list has true label
+            if np_total_loss[unlab_label_list[idx]][idx]:
+                prediction_check_list[unlab_label_list[idx]] += 1
 
-        for key in range(len(min_total_loss)):
-            dict_loss_arg[key] = (min_total_arg[key], min_total_loss[key])
+        cnt = Counter()
+        cnt.update(unlab_label_list)
 
-        sorted_loss_arg = sorted(dict_loss_arg.items(), key=lambda item: item[1][1], reverse=True)
+        for i in range(len(prediction_check_list)):
+            prediction_check_list[i] = prediction_check_list[i] / cnt[i]
 
-        for cls in range(num_cls):
-            datanum.append(0)
+        bools = sum(np_total_loss)
+        # print('bools : ', sum(bools > 2))
+        with open(args.dataset + '_' + args.method_type + '_' + str(args.number) + '_' + 'thres.txt', 'a') as f:
+            f.write(str(cycle + 1) + 'was unlab right? : ' + str(prediction_check_list) + '\n')
+            f.write(str(cycle + 1) + 'bools : ' + str(sum(bools>2)) + '\n')
 
-        print('sorted : ',len(sorted_loss_arg))
-        for n in range(len(sorted_loss_arg)):
-            if datanum[sorted_loss_arg[n][1][0]] < num_per_cls:
-                datanum[sorted_loss_arg[n][1][0]] += 1
+        _, arg = torch.sort(torch.tensor(bools))
 
-                arg = np.append(arg, sorted_loss_arg[n][0])
-        print('arg : ',len(arg))
-        print('datanum : ',datanum)
-        for cls in range(num_cls):
-            if datanum[cls] < num_per_cls:
-                _, targ = torch.sort(torch.tensor(np_total_loss[cls, :]))
-                for idx in targ:
-                    if int(idx) in arg:
-                        pass
-                    arg = np.append(arg, int(idx))
-                    datanum[cls] += 1
-                    if datanum[cls] == num_per_cls:
-                        break
-        print('datanum : ', datanum)
-        print('args :', len(arg))
-            # np_total_diff = np.append(np_total_diff, total_diff)
-            #np_total_loss = np.append(np_total_loss, min_total_loss)
-
-            # norm_diff = minmax_scale(np_total_diff)
-            #norm_loss = np_total_loss
-
-            # print('norm_diff : ',len(norm_diff))
-            # print('norm_loss : ',len(norm_loss))
-
-        #total_arr = np.array(norm_diff) * np.array(norm_loss)
-        #total_arr = np.array(norm_loss)
         #_, arg = torch.sort(-1*torch.tensor(total_arr))
         # for cls in range(10):
         #     unl_new_dataloader = DataLoader(unlab_data_list[cls], batch_size=BATCH)
