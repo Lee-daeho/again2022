@@ -43,6 +43,7 @@ def aff_to_adj(x, y=None):
 
     return adj
 
+
 def read_data(dataloader, labels=True):
     if labels:
         while True:
@@ -52,6 +53,7 @@ def read_data(dataloader, labels=True):
         while True:
             for img, _, _ in dataloader:
                 yield img
+
 
 def vae_loss(x, recon, mu, logvar, beta):
     mse_loss = nn.MSELoss()
@@ -63,6 +65,7 @@ def vae_loss(x, recon, mu, logvar, beta):
     KLD = KLD * beta
     return MSE + KLD
 
+
 def flatten_vae_loss(x, recon, mu, logvar, beta):
     mse_loss = nn.MSELoss(reduction='none')
     MSE = mse_loss(recon, x)
@@ -73,6 +76,7 @@ def flatten_vae_loss(x, recon, mu, logvar, beta):
     # beta = 1
     KLD = KLD * beta
     return MSE + KLD
+
 
 def train_vaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cycle):
     
@@ -194,7 +198,7 @@ def train_cvaal(models, optimizers, labeled_dataloader, unlabeled_dataloader, cy
 
     train_iterations = int((ADDENDUM * cycle) * EPOCHV / BATCH)
     epoch = int((ADDENDUM * cycle) * EPOCHV / BATCH * 0.4)
-    # epoch = 1         #changingggg
+    epoch = 1         #changingggg
     print('epoch : ',epoch)
     # for iter_count in range(train_iterations ):
     for e in range(epoch):
@@ -738,7 +742,12 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
 
 
         loss_thres = np.zeros(num_cls)
+        loss_var_list = np.zeros(num_cls)
+        loss_same_max = np.zeros(num_cls)
+
         loss_diff_thres = np.zeros(num_cls)
+        loss_diff_var_list = np.zeros(num_cls)
+        loss_diff_min = np.zeros(num_cls)
 
         for i in range(num_cls):
             total_loss = []
@@ -759,7 +768,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                 train_cvaal(models, optimizers, new_dataloader, unlabeled_loader, cycle + 1 , i)
 
             loss_diff = 0
-            total_diff = 0
+            total_diff = None
             # print('why?')
             for j in range(num_cls):
                 if i == j:
@@ -767,6 +776,7 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                     # print('j : ',j)
                     loss_same = 0
                     total_num = 0
+                    total_loss = None
                     for k, (labeled_imgs, labels) in enumerate(new_dataloader):
                         models['vae'].cuda()
                         labeled_imgs = labeled_imgs.cuda()
@@ -778,14 +788,21 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                             # VAE step
                             # for count in range(num_vae_steps):  # num_vae_steps
                             recon, _, mu, logvar = models['vae'](labeled_imgs)
-                            unsup_loss = vae_loss(labeled_imgs, recon, mu, logvar, beta=1)
-                            # print('unsup_loss : ',unsup_loss)
-
-                            loss_same += (unsup_loss * len(labels))
-                            total_num += len(labels)
+                            unsup_loss = flatten_vae_loss(labeled_imgs, recon, mu, logvar, beta=1)
+                            # loss_same += (unsup_loss * len(labels))
+                            # total_num += len(labels)
+                            if total_loss is None:
+                                total_loss = unsup_loss.detach().cpu().numpy()
+                            else:
+                                total_loss = np.concatenate((total_loss, unsup_loss.detach().cpu().numpy()))
                     # print('total_num : ',total_num)
-                    loss_same /= total_num
+                    # loss_same /= total_num
+                    loss_same = np.mean(total_loss)
+                    loss_same_var = np.std(total_loss)
+                    loss_same_mx = np.max(total_loss)
                     loss_thres[i] = loss_same
+                    loss_var_list[i] = loss_same_var
+                    loss_same_max[i] = loss_same_mx
                     # print('loss_same : ',loss_same)
 
                 else:
@@ -801,32 +818,54 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
                             # VAE step
                             # for count in range(num_vae_steps):  # num_vae_steps
                             recon, _, mu, logvar = models['vae'](labeled_imgs)
-                            # nbeta = beta * (epoch-e)/epoch
-                            unsup_loss = vae_loss(labeled_imgs, recon, mu, logvar, beta=1)
+
+                            unsup_loss = flatten_vae_loss(labeled_imgs, recon, mu, logvar, beta=1)
+
+                            if total_diff is None:
+                                total_diff = unsup_loss.detach().cpu().numpy()
+                            else:
+                                total_diff = np.concatenate((total_diff, unsup_loss.detach().cpu().numpy()))
                             # print('unsup_loss : ',unsup_loss)
                             # print('len labels : ',len(labels))
 
-                            loss_diff += unsup_loss * len(labels)
-                            total_diff += len(labels)
+                            # loss_diff += unsup_loss * len(labels)
+                            # total_diff += len(labels)
 
-            loss_diff /= total_diff
+            # loss_diff /= total_diff
+            loss_diff = np.mean(total_diff)
+            loss_diff_var = np.std(total_diff)
+            loss_diff_mn = np.min(total_diff)
+
             loss_diff_thres[i] = loss_diff
+            loss_diff_var_list[i] = loss_diff_var
+            loss_diff_min[i] = loss_diff_mn
 
             print('loss_same : ',loss_same)
             print('loss_diff : ',loss_diff)
 
         with open(args.dataset + '_' + args.method_type + '_' + str(args.number) + '_' + 'thres.txt', 'a') as f:
             f.write(str(cycle+1) + 'thres same : ' + str(loss_thres) + '\n')
+            f.write(str(cycle + 1) + 'thres same var : ' + str(loss_var_list) + '\n')
+            f.write(str(cycle + 1) + 'thres same max : ' + str(loss_same_max) + '\n')
+
             f.write(str(cycle + 1) + 'thres diff : ' + str(loss_diff_thres) + '\n')
+            f.write(str(cycle + 1) + 'thres diff var : ' + str(loss_diff_var_list) + '\n')
+            f.write(str(cycle + 1) + 'thres diff min : ' + str(loss_diff_min) + '\n')
         beta = 1
 
         # c = Counter()
         np_total_loss = None
         arg = np.array([])
         print('loss_thres : ',loss_thres)
+        unlab_label_list = None
         for i, (images, labels, _) in enumerate(unlabeled_loader):
             total_loss = []
             images = images.cuda()
+
+            if unlab_label_list is None:
+                unlab_label_list = labels.detach().cpu().numpy()
+            else:
+                unlab_label_list = np.concatenate((unlab_label_list, labels.detach().cpu().numpy()))
 
             for vae_num in range(num_cls):
                 if args.dataset == 'cifar100':
@@ -852,10 +891,22 @@ def query_samples(model, method, data_unlabeled, subset, labeled_set, cycle, arg
 
         # print('np total loss : ',np_total_loss.shape)
         # print('shitttt : ',np_total_loss)
+        prediction_check_list = np.zeros(num_cls)
+
+        for idx in range(len(unlab_label_list)):    #unlab_label_list has true label
+            if np_total_loss[idx][unlab_label_list[idx]]:
+                prediction_check_list[unlab_label_list[idx]] += 1
+
+        cnt = Counter()
+        cnt.update(unlab_label_list)
+
+        for i in range(len(prediction_check_list)):
+            prediction_check_list[i] = prediction_check_list / cnt[i]
 
         bools = sum(np_total_loss)
         # print('bools : ', sum(bools > 2))
         with open(args.dataset + '_' + args.method_type + '_' + str(args.number) + '_' + 'thres.txt', 'a') as f:
+            f.write(str(cycle + 1) + 'was unlab right? : ' + str(prediction_check_list) + '\n')
             f.write(str(cycle + 1) + 'bools : ' + str(sum(bools>2)) + '\n')
 
         _, arg = torch.sort(torch.tensor(bools))
